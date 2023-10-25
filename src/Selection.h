@@ -179,6 +179,9 @@ public:
 	std::vector<SelectionRange> RangesCopy() const {
 		return ranges;
 	}
+	//+DOGOT
+	std::vector<SelectionRange>& GetRanges() { return ranges; }
+	//-DOGOT
 };
 
 #ifdef SCI_NAMESPACE

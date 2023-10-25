@@ -22,6 +22,10 @@
 #define PLAT_WX  0
 #define PLAT_FOX 0
 
+//+DOGOT
+// We don't use any OS features.
+#define PLAT_DOGOT 1
+/*
 #if defined(FOX)
 #undef PLAT_FOX
 #define PLAT_FOX 1
@@ -54,6 +58,8 @@
 #define PLAT_WIN 1
 
 #endif
+*/
+//-DOGOT
 
 #ifdef SCI_NAMESPACE
 namespace Scintilla {

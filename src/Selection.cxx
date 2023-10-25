@@ -24,9 +24,12 @@ void SelectionPosition::MoveForInsertDelete(bool insertion, int startChange, int
 		virtualSpace = 0;
 	}
 	if (insertion) {
-		if (position > startChange) {
+		//+DOGOT
+		// Fixing this erroneous condition.
+		if (position >= startChange) {
 			position += length;
 		}
+		//-DOGOT
 	} else {
 		if (position > startChange) {
 			int endDeletion = startChange + length;
@@ -354,7 +357,9 @@ void Selection::Clear() {
 
 void Selection::RemoveDuplicates() {
 	for (size_t i=0; i<ranges.size()-1; i++) {
-		if (ranges[i].Empty()) {
+		//+DOGOT
+		// Removed for multi-caret.
+		//if (ranges[i].Empty()) {
 			size_t j=i+1;
 			while (j<ranges.size()) {
 				if (ranges[i] == ranges[j]) {
@@ -365,7 +370,8 @@ void Selection::RemoveDuplicates() {
 					j++;
 				}
 			}
-		}
+		//}
+		//-DOGOT
 	}
 }
 

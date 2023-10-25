@@ -116,7 +116,10 @@ Editor::Editor() {
 	errorStatus = 0;
 	mouseDownCaptures = true;
 
-	bufferedDraw = true;
+	//+DOGOT
+	// Don't buffer since we can render immediately.
+	bufferedDraw = false;
+	//-DOGOT
 	twoPhaseDraw = true;
 
 	lastClickTime = 0;
@@ -1775,10 +1778,16 @@ void Editor::PaintSelMargin(Surface *surfWindow, PRectangle &rc) {
 			rcSelMargin.right = rcSelMargin.left + vs.ms[margin].width;
 
 			if (vs.ms[margin].style != SC_MARGIN_NUMBER) {
+				//+DOGOT
+				// Remove patterned fill on folding margin.
+				/*
 				if (vs.ms[margin].mask & SC_MASK_FOLDERS)
 					// Required because of special way brush is created for selection margin
 					surface->FillRectangle(rcSelMargin, *pixmapSelPattern);
 				else {
+				*/
+				{
+				//-DOGOT
 					ColourDesired colour;
 					switch (vs.ms[margin].style) {
 					case SC_MARGIN_BACK:
@@ -2065,6 +2074,10 @@ bool BadUTF(const char *s, int len, int &trailBytes) {
 		return true;
 	} else if (*us >= 0xF0) {
 		// 4 bytes
+		//+DOGOT
+    // Make all UTF8 appear as hexits.
+    return true;
+		//-DOGOT
 		if (len < 4)
 			return true;
 		if (GoodTrailByte(us[1]) && GoodTrailByte(us[2]) && GoodTrailByte(us[3])) {
@@ -2092,6 +2105,10 @@ bool BadUTF(const char *s, int len, int &trailBytes) {
 		}
 	} else if (*us >= 0xE0) {
 		// 3 bytes
+		//+DOGOT
+		// Make all UTF8 appear as hexits.
+		return true;
+		//-DOGOT
 		if (len < 3)
 			return true;
 		if (GoodTrailByte(us[1]) && GoodTrailByte(us[2])) {
@@ -2118,6 +2135,11 @@ bool BadUTF(const char *s, int len, int &trailBytes) {
 		}
 	} else if (*us >= 0xC2) {
 		// 2 bytes
+		//+DOGOT
+		// Make all UTF8 appear as hexits.
+		if(*us > 255)
+			return true;
+		//-DOGOT
 		if (len < 2)
 			return true;
 		if (GoodTrailByte(us[1])) {
@@ -2513,9 +2535,13 @@ void DrawTextBlob(Surface *surface, ViewStyle &vsDraw, PRectangle rcSegment,
 	PRectangle rcChar = rcCChar;
 	rcChar.left++;
 	rcChar.right--;
-	surface->DrawTextClipped(rcChar, ctrlCharsFont,
+	//+DOGOT
+	// This used to be DrawTextClipped, but is not implemented in brave cobra causing 
+	// unicode byte blocks to not render the text code properly.
+	surface->DrawTextNoClip(rcChar, ctrlCharsFont,
 	        rcSegment.top + vsDraw.maxAscent, s, istrlen(s),
 	        textBack, textFore);
+	//-DOGOT
 }
 
 void Editor::DrawEOL(Surface *surface, ViewStyle &vsDraw, PRectangle rcLine, LineLayout *ll,
@@ -2710,13 +2736,74 @@ void Editor::DrawIndicators(Surface *surface, ViewStyle &vsDraw, int line, int x
 			if (!deco->rs.ValueAt(startPos)) {
 				startPos = deco->rs.EndRun(startPos);
 			}
-			while ((startPos < posLineEnd) && (deco->rs.ValueAt(startPos))) {
+			//+DOGOT
+			//   Previous code was:
+			//
+			//     while ((startPos < posLineEnd) && (deco->rs.ValueAt(startPos))) {
+			//
+			//   Changed to:
+			//
+			//     while ((startPos < posLineEnd)) {
+			//       if (!deco->rs.ValueAt(startPos)) {
+			//         startPos = deco->rs.EndRun(startPos);
+			//         continue;
+			//       }
+			//
+			//   It is ABSOLUTELY valid to have a style value of 0.  0 is the default
+			//   style value, independent of lexer, for each character in a text body.
+			//   Indicators, on a single line of text, can be separated by a style run
+			//   of 0 [ie, no indicators].  The loop should not exit on these indicator
+			//   gaps.  It should simply skip over the call to 'DrawIndicator'.
+			while ((startPos < posLineEnd)) {
+				if(!deco->rs.ValueAt(startPos)) {
+					startPos = deco->rs.EndRun(startPos);
+					continue;
+				}
+			//-DOGOT
 				int endPos = deco->rs.EndRun(startPos);
 				if (endPos > posLineEnd)
 					endPos = posLineEnd;
 				DrawIndicator(deco->indicator, startPos - posLineStart, endPos - posLineStart,
 					surface, vsDraw, xStart, rcLine, ll, subLine);
-				startPos = deco->rs.EndRun(endPos);
+
+				//+DOGOT
+				//   Previous code:
+				//
+				//     startPos = deco->rs.EndRun(endPos);
+				//
+				//   Changed to:
+				//
+				//     startPos = deco->rs.EndRun(startPos);
+				//
+				//   In a document, a run of chars occurs between two caret positions.
+				//   Thus an end-run occurs on the same caret position as the next
+				//   run's start-run.
+				//
+				//   'EndRun' fn implementation:
+				//
+				//     starts->PositionFromPartition(starts->PartitionFromPosition(endPos) + 1)
+				//
+				//   Ex: Let run/partition index 0 be caret positions [0-1] (run of 1 char).
+				//       Let run/partition index 1 be caret positions [1-5] (run of 4 chars).
+				//       Let run/partition index 2 be caret positions [5-7] (run of 2 chars).
+				//
+				//       --> On the first pass in this loop, the above nested call of
+				//           'starts->PartitionFromPosition(endPos)' in 'EndRun(endPos)',
+				//           returns a run/partition of index 1. The run/partition
+				//           with a starting caret position of 1 is at run-index 1.
+				//
+				//       --> Next the outer call of 'starts->PositionFromPartition' in
+				//           'EndRun(endPos)' receives an input of 1 + 1, due to the
+				//           nested 'starts->PartitionFromPosition(endPos)' returning 1.
+				//
+				//       --> The output, then, of 'PositionFromPartition(2)' is the
+				//           position of the caret at the start of the run with
+				//           run/partition index 2, which is caret position 5.
+				//
+				//       --> So, the next loop pass will start at caret position 5,
+				//           completely bypassing the run/partition [1-5].
+				startPos = deco->rs.EndRun(startPos);
+				//-DOGOT
 			}
 		}
 	}
@@ -3136,6 +3223,15 @@ void Editor::DrawLine(Surface *surface, ViewStyle &vsDraw, int line, int lineVis
 									rcDot.right = rcDot.left + vs.whitespaceSize;
 									rcDot.bottom = rcDot.top + vs.whitespaceSize;
 									surface->FillRectangle(rcDot, textFore);
+									//+DOGOT
+									// Draw an extra dot if this is tab aligned.
+									if((cpos+1) % pdoc->tabInChars == 0)
+									{
+										rcDot.top += 5;
+										rcDot.bottom += 5;
+										surface->FillRectangle(rcDot, textFore);
+									}
+									//-DOGOT
 								}
 							}
 							if (inIndentation && vsDraw.viewIndentationGuides == ivReal) {
@@ -3552,7 +3648,9 @@ void Editor::Paint(Surface *surfaceWindow, PRectangle rcArea) {
 		surfaceWindow->SetClip(rcArea);
 
 	if (paintState != paintAbandoned) {
-		PaintSelMargin(surfaceWindow, rcArea);
+		//+DOGOT
+		// We draw margins at the end (see comment below).
+		//-DOGOT
 
 		PRectangle rcRightMargin = rcClient;
 		rcRightMargin.left = rcRightMargin.right - vs.rightMarginWidth;
@@ -3726,6 +3824,10 @@ void Editor::Paint(Surface *surfaceWindow, PRectangle rcArea) {
 		//Platform::DebugPrintf(
 		//"Layout:%9.6g    Paint:%9.6g    Ratio:%9.6g   Copy:%9.6g   Total:%9.6g\n",
 		//durLayout, durPaint, durLayout / durPaint, durCopy, etWhole.Duration());
+		//+DOGOT
+		// Draw our margins last so text within the document doesn't draw over them when you scroll horizontally.
+		PaintSelMargin(surfaceWindow, rcArea);
+		//-DOGOT
 		NotifyPainted();
 	}
 }
@@ -5750,7 +5852,10 @@ long Editor::FindText(
 
 	Sci_TextToFind *ft = reinterpret_cast<Sci_TextToFind *>(lParam);
 	int lengthFound = istrlen(ft->lpstrText);
-	std::auto_ptr<CaseFolder> pcf(CaseFolderForEncoding());
+	//+DOGOT
+	// Newest C++ uses unique_ptr instead of auto_ptr.
+	std::unique_ptr<CaseFolder> pcf(CaseFolderForEncoding());
+	//-DOGOT
 	int pos = pdoc->FindText(ft->chrg.cpMin, ft->chrg.cpMax, ft->lpstrText,
 	        (wParam & SCFIND_MATCHCASE) != 0,
 	        (wParam & SCFIND_WHOLEWORD) != 0,
@@ -5795,7 +5900,10 @@ long Editor::SearchText(
 	const char *txt = reinterpret_cast<char *>(lParam);
 	int pos;
 	int lengthFound = istrlen(txt);
-	std::auto_ptr<CaseFolder> pcf(CaseFolderForEncoding());
+	//+DOGOT
+	// Newest C++ uses unique_ptr instead of auto_ptr.
+	std::unique_ptr<CaseFolder> pcf(CaseFolderForEncoding());
+	//-DOGOT
 	if (iMessage == SCI_SEARCHNEXT) {
 		pos = pdoc->FindText(searchAnchor, pdoc->Length(), txt,
 		        (wParam & SCFIND_MATCHCASE) != 0,
@@ -5846,7 +5954,10 @@ std::string Editor::CaseMapString(const std::string &s, int caseMapping) {
 long Editor::SearchInTarget(const char *text, int length) {
 	int lengthFound = length;
 
-	std::auto_ptr<CaseFolder> pcf(CaseFolderForEncoding());
+	//+DOGOT
+	// Newest C++ uses unique_ptr instead of auto_ptr.
+	std::unique_ptr<CaseFolder> pcf(CaseFolderForEncoding());
+	//-DOGOT
 	int pos = pdoc->FindText(targetStart, targetEnd, text,
 	        (searchFlags & SCFIND_MATCHCASE) != 0,
 	        (searchFlags & SCFIND_WHOLEWORD) != 0,
@@ -5873,10 +5984,13 @@ void Editor::GoToLine(int lineNo) {
 }
 
 static bool Close(Point pt1, Point pt2) {
-	if (abs(pt1.x - pt2.x) > 3)
+	//+DOGOT
+	// Emscripten's 'abs' overload ambiguous.
+	if (abs(static_cast<long>(pt1.x - pt2.x)) > 3)
 		return false;
-	if (abs(pt1.y - pt2.y) > 3)
+	if (abs(static_cast<long>(pt1.y - pt2.y)) > 3)
 		return false;
+	//-DOGOT
 	return true;
 }
 
@@ -7201,13 +7315,23 @@ sptr_t Editor::WndProc(unsigned int iMessage, uptr_t wParam, sptr_t lParam) {
 		VerticalCentreCaret();
 		break;
 
+	//+DOGOT
+	// We have our own implementation of this for multi-caret.
+	/*
 	case SCI_MOVESELECTEDLINESUP:
 		MoveSelectedLinesUp();
 		break;
+	*/
+	//-DOGOT
 
+	//+DOGOT
+	// We have our own implementation of this for multi-caret.
+	/*
 	case SCI_MOVESELECTEDLINESDOWN:
 		MoveSelectedLinesDown();
 		break;
+	*/
+	//-DOGOT
 
 	case SCI_COPYRANGE:
 		CopyRangeToClipboard(wParam, lParam);
@@ -7225,11 +7349,16 @@ sptr_t Editor::WndProc(unsigned int iMessage, uptr_t wParam, sptr_t lParam) {
 		EnsureCaretVisible();
 		break;
 
+	//+DOGOT
+	// We have our own implementation of this for multi-caret.
+	/*
 	case SCI_CLEAR:
 		Clear();
 		SetLastXChosen();
 		EnsureCaretVisible();
 		break;
+	*/
+	//-DOGOT
 
 	case SCI_UNDO:
 		Undo();
@@ -7499,6 +7628,9 @@ sptr_t Editor::WndProc(unsigned int iMessage, uptr_t wParam, sptr_t lParam) {
 			AddStyledText(CharPtrFromSPtr(lParam), wParam);
 		return 0;
 
+	//+DOGOT
+	// We have our own implementation of this for multi-caret.
+	/*
 	case SCI_INSERTTEXT: {
 			if (lParam == 0)
 				return 0;
@@ -7513,6 +7645,8 @@ sptr_t Editor::WndProc(unsigned int iMessage, uptr_t wParam, sptr_t lParam) {
 			SetEmptySelection(newCurrent);
 			return 0;
 		}
+	*/
+	//-DOGOT
 
 	case SCI_APPENDTEXT:
 		pdoc->InsertString(pdoc->Length(), CharPtrFromSPtr(lParam), wParam);
@@ -7587,8 +7721,13 @@ sptr_t Editor::WndProc(unsigned int iMessage, uptr_t wParam, sptr_t lParam) {
 		}
 		break;
 
+	//+DOGOT
+	// We have our own implementation of this for multi-caret.
+	/*
 	case SCI_GETCURRENTPOS:
 		return sel.IsRectangular() ? sel.Rectangular().caret.Position() : sel.MainCaret();
+	*/
+	//-DOGOT
 
 	case SCI_SETANCHOR:
 		if (sel.IsRectangular()) {
